@@ -53,6 +53,7 @@ else:
                     "AlbertTokenizerFast" if is_tokenizers_available() else None,
                 ),
             ),
+            ("ernie_m", ("ErnieMTokenizer", "ErnieMTokenizerFast")),
             ("bart", ("BartTokenizer", "BartTokenizerFast")),
             (
                 "barthez",

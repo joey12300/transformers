@@ -426,7 +426,10 @@ class SpmConverter(Converter):
         from .utils import sentencepiece_model_pb2 as model_pb2
 
         m = model_pb2.ModelProto()
-        with open(self.original_tokenizer.vocab_file, "rb") as f:
+        proto_file = self.original_tokenizer.vocab_file
+        if hasattr(self.original_tokenizer, "sentencepiece_model_file"):
+            proto_file = self.original_tokenizer.sentencepiece_model_file
+        with open(proto_file, "rb") as f:
             m.ParseFromString(f.read())
         self.proto = m
 
@@ -534,6 +537,58 @@ class AlbertConverter(SpmConverter):
             ],
         )
 
+
+
+class ErnieMConverter(SpmConverter):
+    def normalizer(self, proto):
+        list_normalizers = [
+            normalizers.Replace("“", '"'),
+            normalizers.Replace("”", '"'),
+            normalizers.Replace("’", '"'),
+            normalizers.Replace("—", '"'),
+            # clean text for white space and control character, like bert normalizer,
+            normalizers.Replace(Regex("[\\s\\p{Zs}]+"), ' '),
+            normalizers.Replace(
+                # \p{Cn} is not supported in re2
+                Regex("[\\p{Cf}\\p{Cc}\\p{Co}\\p{Cs}]+"),
+                ''),
+        ]
+        precompiled_charsmap = proto.normalizer_spec.precompiled_charsmap
+        list_normalizers.append(
+            normalizers.Precompiled(precompiled_charsmap))
+        list_normalizers.append(normalizers.Replace(Regex(" {2,}"), " "))
+        list_normalizers.append(normalizers.Replace(Regex("\\s$"), ""))
+        return normalizers.Sequence(list_normalizers)
+
+    def vocab(self, proto):
+        # construct a dict that map word and score
+        word_score_dict = {}
+        for piece in proto.pieces:
+            word_score_dict[piece.piece] = piece.score
+
+        vocab_list = [None] * len(self.original_tokenizer.vocab)
+        for _token, _id in self.original_tokenizer.vocab.items():
+            if _token in word_score_dict:
+                score = word_score_dict[_token] if check_number_comma(
+                    _token) else word_score_dict[_token] - 100
+                vocab_list[_id] = (_token, score)
+            else:
+                vocab_list[_id] = (_token, 0.0)
+        return vocab_list
+
+    def unk_id(self, proto):
+        return self.original_tokenizer.convert_tokens_to_ids(
+            str(self.original_tokenizer.unk_token))
+
+    def post_processor(self):
+        return processors.TemplateProcessing(
+            single="[CLS]:0 $A:0 [SEP]:0",
+            pair="[CLS]:0 $A:0 [SEP]:0 [SEP]:1 $B:1 [SEP]:1",
+            special_tokens=[
+                ("[CLS]", self.original_tokenizer.convert_tokens_to_ids("[CLS]")),
+                ("[SEP]", self.original_tokenizer.convert_tokens_to_ids("[SEP]")),
+            ],
+        )
 
 class BarthezConverter(SpmConverter):
     def unk_id(self, proto):
@@ -1048,6 +1103,7 @@ SLOW_TO_FAST_CONVERTERS = {
     "XLNetTokenizer": XLNetConverter,
     "SplinterTokenizer": SplinterConverter,
     "XGLMTokenizer": XGLMConverter,
+    "ErnieMTokenizer": ErnieMConverter,
 }
 
 
